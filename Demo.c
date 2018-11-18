@@ -8,6 +8,21 @@
  * 			Nadja Peters nadja.peters@tum.de (RCS, TUM)
  *
  */
+
+/* ToDo
+ * Langsam Drehen
+ * 3.2.1 Switching between Exercise Solution Screens 3.2 3.3 3.4
+ * https://exploreembedded.com/wiki/Task_Switching
+ * 3.2.2 Set 1 Task Static
+ * 3.2.3
+ * 3.2.4 fertig, zu testen
+ * 3.2.5 UART
+ * 3.3.1
+ * 3.3.2
+ * 3.3.3 play around
+*/
+
+
 #include "includes.h"
 // start and stop bytes for the UART protocol
 static const uint8_t startByte = 0xAA, stopByte = 0x55;
@@ -20,6 +35,11 @@ SemaphoreHandle_t ESPL_DisplayReady;
 // Stores lines to be drawn
 QueueHandle_t JoystickQueue;
 
+TaskHandle_t drawTaskHandle = NULL, checkJoystickHandle = NULL,
+		CircleAppearHandle = NULL, CircleDisappearHandle = NULL,
+		countButtonAHandle = NULL, countButtonBHandle = NULL,
+		resetCountButtonHandle = NULL, controllableCounterHandle = NULL;
+
 int main() {
 	// Initialize Board functions and graphics
 	ESPL_SystemInit();
@@ -28,9 +48,17 @@ int main() {
 	JoystickQueue = xQueueCreate(100, 2 * sizeof(char));
 
 	// Initializes Tasks with their respective priority
-	xTaskCreate(drawTask, "drawTask", 1000, NULL, 4, NULL);
-	xTaskCreate(checkJoystick, "checkJoystick", 1000, NULL, 3, NULL);
-	//xTaskCreate(switchScreen, "switchScreen", 1000, NULL, 1, NULL);
+	xTaskCreate(TaskController, "TaskController", 1000, NULL, 8, NULL);
+
+	xTaskCreate(drawTask, "drawTask", 1000, NULL, 4, &drawTaskHandle);
+	xTaskCreate(checkJoystick, "checkJoystick", 1000, NULL, 3, &checkJoystickHandle);
+	xTaskCreate(CircleAppear, "CircleAppear", 1000, NULL, 4, &CircleAppearHandle);
+	xTaskCreate(CircleDisappear, "CircleDisappear", 1000, NULL, 4, &CircleDisappearHandle);
+	xTaskCreate(countButtonA, "countButtonA", 1000, NULL, 5, &countButtonAHandle);
+	xTaskCreate(countButtonB, "countButtonB", 1000, NULL, 6, &countButtonBHandle);
+	xTaskCreate(resetCountButton, "resetCountButton", 1000, NULL, 7, &resetCountButtonHandle);
+	xTaskCreate(controllableCounter,"controllableCounter", 1000, NULL, 3, &controllableCounterHandle);
+
 
 	// Start FreeRTOS Scheduler
 	vTaskStartScheduler();
@@ -40,6 +68,77 @@ int main() {
  * Example task which draws to the display.
  * Documentation on https://wiki.ugfx.io/index.php/Drawing
  */
+void TaskController() {
+
+	int FlagButtonC = 0;
+	int FlagButtonE = 0;
+	int intActExerc = 2;
+	int intContrCounterOn = 0;
+
+	while (TRUE) {
+
+		/***********************
+		 *	3.2 Switching Exercises 3.2, 3.3, 3.4
+		 ***********************/
+		if (!GPIO_ReadInputDataBit(ESPL_Register_Button_E, ESPL_Pin_Button_E) && !FlagButtonE) {
+			if (intActExerc == 2) {
+				intActExerc = 3;	//exercise 3.2
+			} else if (intActExerc == 3) {
+				intActExerc = 4;	//exercise 3.3
+			} else if (intActExerc == 4) {
+				intActExerc = 2;	//exercise 3.4
+			}
+			FlagButtonE = 1;
+			vTaskDelay(50);
+		} else if (GPIO_ReadInputDataBit(ESPL_Register_Button_E, ESPL_Pin_Button_E)) {
+			FlagButtonE = 0;
+		}
+
+		switch (intActExerc) {
+		case 1:
+		case 2:
+			vTaskResume(CircleAppearHandle);
+			vTaskResume(CircleDisappearHandle);
+			vTaskSuspend(drawTaskHandle);
+
+			break;
+		case 3:
+			vTaskSuspend(drawTaskHandle);
+			vTaskSuspend(CircleDisappearHandle);
+
+			break;
+		case 4:
+			vTaskSuspend(drawTaskHandle);
+			vTaskSuspend(CircleAppearHandle);
+
+			break;
+		default:
+			break;
+		}
+
+		/***********************
+		*	3.2.4
+		***********************/
+		//Flag -> edge detection
+		// Delay -> debouncing
+		//intContrCounterOn = 1 -> ControllableCounter on
+		if (!GPIO_ReadInputDataBit(ESPL_Register_Button_C, ESPL_Pin_Button_C) && !FlagButtonC && !intContrCounterOn) {
+			vTaskResume(controllableCounter);
+			FlagButtonC = 1;
+			intContrCounterOn = 1;
+			vTaskDelay(50);
+		} else if (!GPIO_ReadInputDataBit(ESPL_Register_Button_C, ESPL_Pin_Button_C) && !FlagButtonC && intContrCounterOn) {
+			vTaskSuspend(controllableCounter);
+			FlagButtonC = 1;
+			intContrCounterOn = 0;
+			vTaskDelay(50);
+		}else if (GPIO_ReadInputDataBit(ESPL_Register_Button_C, ESPL_Pin_Button_C)) {
+			FlagButtonC = 0;
+		}
+
+	}
+}
+
 void drawTask() {
 
 	int16_t alpha = 0;	//angle for rotation around triangle
@@ -48,13 +147,16 @@ void drawTask() {
 	int16_t intButtonA = 0,
 			intButtonB = 0,
 			intButtonC = 0,
-			intButtonD = 0,
+			intButtonD = 0;
 
 	int8_t FlagButtonA = 0,
 			FlagButtonB = 0,
 			FlagButtonC = 0,
 			FlagButtonD = 0,
-			FlagButtonK = 0;
+			FlagButtonK = 0,
+			FlagButtonE = 0;
+
+	int8_t intActExerc = 2;	//first exercise on screen
 
 	char str[100]; // buffer for messages to draw to display
 	struct coord joystickPosition; // joystick queue input buffer
@@ -123,7 +225,7 @@ void drawTask() {
 		gdispDrawLine(trianglePositionX - 15, trianglePositionY + 15, trianglePositionX, trianglePositionY - 15, Red);
 
 		// Generate string
-		sprintf(str, "Random Text 1");
+		sprintf(str, "Random Text 7");
 		gdispDrawString(20 + ScreenPosX, 50 + ScreenPosY, str, font1, Black);
 
 		// Generate moving string
@@ -137,11 +239,12 @@ void drawTask() {
 				intButtonC, intButtonD);
 		gdispDrawString(150 + ScreenPosX, 50 + ScreenPosY, str, font1, Black);
 
-		//Buttons are Pulled-Up, setting a flag to increase it once per press, no debouncing needed because enough delay
+		//Buttons are Pulled-Up, setting a flag to increase it once per press, debouncing --> vTaskDelay
 		//Button A
 		if (!GPIO_ReadInputDataBit(ESPL_Register_Button_A, ESPL_Pin_Button_A) && !FlagButtonA) {
 			intButtonA++;
 			FlagButtonA = 1;
+			vTaskDelay(50);
 		}
 		else if (GPIO_ReadInputDataBit(ESPL_Register_Button_A, ESPL_Pin_Button_A)) {
 			FlagButtonA = 0;
@@ -150,6 +253,7 @@ void drawTask() {
 		if (!GPIO_ReadInputDataBit(ESPL_Register_Button_B, ESPL_Pin_Button_B) && !FlagButtonB) {
 			intButtonB++;
 			FlagButtonB = 1;
+			vTaskDelay(50);
 		}
 		else if (GPIO_ReadInputDataBit(ESPL_Register_Button_B, ESPL_Pin_Button_B)) {
 			FlagButtonB = 0;
@@ -158,6 +262,7 @@ void drawTask() {
 		if (!GPIO_ReadInputDataBit(ESPL_Register_Button_C, ESPL_Pin_Button_C) && !FlagButtonC) {
 			intButtonC++;
 			FlagButtonC = 1;
+			vTaskDelay(50);
 		}
 		else if (GPIO_ReadInputDataBit(ESPL_Register_Button_C, ESPL_Pin_Button_C)) {
 			FlagButtonC = 0;
@@ -166,6 +271,7 @@ void drawTask() {
 		if (!GPIO_ReadInputDataBit(ESPL_Register_Button_D, ESPL_Pin_Button_D) && !FlagButtonD) {
 			intButtonD++;
 			FlagButtonD = 1;
+			vTaskDelay(50);
 		}
 		else if (GPIO_ReadInputDataBit(ESPL_Register_Button_D, ESPL_Pin_Button_D)) {
 			FlagButtonD = 0;
@@ -177,6 +283,7 @@ void drawTask() {
 			intButtonC = 0;
 			intButtonD = 0;
 			FlagButtonK = 1;
+			vTaskDelay(50);
 		}
 		else if (GPIO_ReadInputDataBit(ESPL_Register_Button_K, ESPL_Pin_Button_K)) {
 			FlagButtonK = 0;
@@ -281,6 +388,67 @@ void uartReceive() {
 	}
 }
 
+void CircleAppear() {
+	while (TRUE) {
+		// Clear background
+		gdispClear(White);
+		//draw circle
+		gdispFillCircle(100,100, 10, Blue);
+
+		// Wait for display to stop writing
+		xSemaphoreTake(ESPL_DisplayReady, portMAX_DELAY);
+		// swap buffers
+		ESPL_DrawLayer();
+
+		vTaskDelay(500); //1000 ticks per Hz
+		}
+}
+void CircleDisappear() {
+	while (TRUE) {
+		// Clear background
+		gdispClear(White);
+
+		// Wait for display to stop writing
+		xSemaphoreTake(ESPL_DisplayReady, portMAX_DELAY);
+		// swap buffers
+		ESPL_DrawLayer();
+
+		vTaskDelay(1000); //1000 ticks per Hz
+		}
+}
+
+/***********************
+*	3.2.3
+***********************/
+void countButtonA() {
+	while (TRUE) {
+
+		}
+}
+void countButtonB() {
+	while (TRUE) {
+
+		}
+}
+void resetCountButton() {
+	while (TRUE) {
+
+		}
+}
+
+/***********************
+*	3.2.4
+***********************/
+void controllableCounter() {
+	int16_t counter = 0;
+
+	while (TRUE) {
+		counter++;
+
+		vTaskDelay(1000);
+		}
+}
+
 /*
  *  Hook definitions needed for FreeRTOS to function.
  */
@@ -293,3 +461,4 @@ void vApplicationMallocFailedHook() {
 	while (TRUE) {
 	};
 }
+
