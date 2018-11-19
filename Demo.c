@@ -14,17 +14,17 @@
  * 3.2.1 Switching between Exercise Solution Screens 2 3.3 3.4 --> done
  * https://exploreembedded.com/wiki/Task_Switching
  * 3.2.2 Set 1 Task Static
- * 3.2.3 reset Counter A & Counter B
- * 3.2.4 --> done
+ * 3.2.3 done
+ * 3.2.4 done
  * 3.2.5 UART
- * 3.3.1
- * 3.3.2
- * 3.3.3 play around
+ * 3.3.1 done
+ * 3.3.2 ISR on 15 ticks!!!!
 */
 
 
 #include "includes.h"
 // start and stop bytes for the UART protocol
+
 static const uint8_t startByte = 0xAA, stopByte = 0x55;
 
 static const uint16_t displaySizeX = 320, displaySizeY = 240;
@@ -35,16 +35,25 @@ SemaphoreHandle_t ESPL_DisplayReady;
 // Stores lines to be drawn
 QueueHandle_t JoystickQueue;
 
+// creating of handles
 TaskHandle_t drawTaskHandle = NULL, checkJoystickHandle = NULL,
 		CircleAppearHandle = NULL, CircleDisappearHandle = NULL,
 		countButtonAHandle = NULL, countButtonBHandle = NULL,
-		resetCountButtonHandle = NULL, controllableCounterHandle = NULL;
+		resetCountButtonHandle = NULL, controllableCounterHandle = NULL,
+		PriorityOneTaskHandle = NULL, PriorityTwoTaskHandle = NULL,
+		PriorityThreeTaskHandle = NULL, PriorityFourTaskHandle = NULL,
+		PriorityOutputTaskHandle = NULL, TaskControllerHandle = NULL,
+		uartReceiveHandle = NULL;
 
-SemaphoreHandle_t CountButtonASemaphore;
+// creating of semaphores
+SemaphoreHandle_t	CountButtonASemaphore,
+					PriorityThreeTaskSemaphore;
 
+// other global variables
 int intCountButtonA = 0;
 int intCountButtonB = 0;
 int intContrCounter = 0;
+
 /*------------------------------------------------------------------------------------------------------------------------------*/
 int main() {
 	// Initialize Board functions and graphics
@@ -54,16 +63,26 @@ int main() {
 	JoystickQueue = xQueueCreate(100, 2 * sizeof(char));
 
 	// Initializes Tasks with their respective priority
-	xTaskCreate(TaskController, "TaskController", 1000, NULL, 9, NULL);
+	xTaskCreate(TaskController, "TaskController", 1000, NULL, 9, &TaskControllerHandle);
+	xTaskCreate(uartReceive, "uartReceive", 1000, NULL, 9, &uartReceiveHandle);
 
 	xTaskCreate(drawTask, "drawTask", 1000, NULL, 4, &drawTaskHandle);
 	xTaskCreate(checkJoystick, "checkJoystick", 1000, NULL, 5, &checkJoystickHandle);
 	xTaskCreate(CircleAppear, "CircleAppear", 1000, NULL, 6, &CircleAppearHandle);							//3.2.2
 	xTaskCreate(CircleDisappear, "CircleDisappear", 1000, NULL, 6, &CircleDisappearHandle);					//3.2.2
+
 	xTaskCreate(countButtonA, "countButtonA", 1000, NULL, 5, &countButtonAHandle);							//3.2.3
 	xTaskCreate(countButtonB, "countButtonB", 1000, NULL, 4, &countButtonBHandle);							//3.2.3
-	xTaskCreate(resetCountButton, "resetCountButton", 1000, NULL, 6, &resetCountButtonHandle);				//3.2.3
-	xTaskCreate(controllableCounter,"controllableCounter", 1000, NULL, 6, &controllableCounterHandle);		//3.2.4
+	xTaskCreate(resetCountButton, "resetCountButton", 1000, NULL, 4, &resetCountButtonHandle);				//3.2.3
+
+	xTaskCreate(controllableCounter,"controllableCounter", 1000, NULL, 4, &controllableCounterHandle);		//3.2.4
+
+	xTaskCreate(PriorityOneTask,"PriorityOneTask", 1000, NULL, 1, &PriorityOneTaskHandle);					//3.3.2
+	xTaskCreate(PriorityTwoTask,"PriorityTwoTask", 1000, NULL, 2, &PriorityTwoTaskHandle);					//3.3.2
+	xTaskCreate(PriorityThreeTask,"PriorityThreeTask", 1000, NULL, 3, &PriorityThreeTaskHandle);			//3.3.2
+	xTaskCreate(PriorityFourTask,"PriorityFourTask", 1000, NULL, 4, &PriorityFourTaskHandle);				//3.3.2
+	xTaskCreate(PriorityOutputTask,"PriorityOutputTask", 1000, NULL, 4, &PriorityOutputTaskHandle);			//3.3.2
+
 
 
 	// Start FreeRTOS Scheduler
@@ -78,7 +97,7 @@ void TaskController() {
 	int16_t FlagButtonE = 0;
 	int16_t intActExerc = 1;
 	int16_t intContrCounterOn = 0;
-	int16_t SecondScreenStartingFlag = 0;
+	int16_t SwitchScreenFlag = 0;
 
 	while (TRUE) {
 
@@ -89,12 +108,13 @@ void TaskController() {
 			if (intActExerc == 1) {
 				intActExerc = 2;	//exercise 2
 			} else if (intActExerc == 2) {
-				intActExerc = 3;	//exercise 3.3
+				intActExerc = 3;	//exercise 3.2
 			} else if (intActExerc == 3) {
-				intActExerc = 1;	//exercise 3.4
+				intActExerc = 1;	//exercise 3.3
 			}
 			FlagButtonE = 1;
-			vTaskDelay(100);
+			SwitchScreenFlag = 0;
+			vTaskDelay(200);
 		} else if (GPIO_ReadInputDataBit(ESPL_Register_Button_E, ESPL_Pin_Button_E)) {
 			FlagButtonE = 0;
 		}
@@ -102,98 +122,119 @@ void TaskController() {
 		switch (intActExerc) {
 		//Screen #1: exercise 2
 		case 1:
-			vTaskSuspend(CircleAppearHandle);
-			vTaskSuspend(CircleDisappearHandle);
-			vTaskSuspend(countButtonAHandle);
-			vTaskSuspend(countButtonBHandle);
-			vTaskSuspend(resetCountButtonHandle);
-			vTaskSuspend(controllableCounterHandle);
+			if (SwitchScreenFlag == 0) /*launches only, if switching to this screen*/{
+				vTaskSuspend(CircleAppearHandle);
+				vTaskSuspend(CircleDisappearHandle);
+				vTaskSuspend(countButtonAHandle);
+				vTaskSuspend(countButtonBHandle);
+				vTaskSuspend(resetCountButtonHandle);
+				vTaskSuspend(controllableCounterHandle);
+				vTaskSuspend(PriorityOneTaskHandle);
+				vTaskSuspend(PriorityTwoTaskHandle);
+				vTaskSuspend(PriorityThreeTaskHandle);
+				vTaskSuspend(PriorityFourTaskHandle);
+				vTaskSuspend(PriorityOutputTaskHandle);
+				vTaskSuspend(uartReceiveHandle);
 
-			vTaskResume(drawTaskHandle);
-			vTaskResume(checkJoystickHandle);
+				vTaskResume(drawTaskHandle);
+				vTaskResume(checkJoystickHandle);
 
-			SecondScreenStartingFlag = 0;			//Flag that marks a switching from Screen #1 to Screen #2
+				SwitchScreenFlag = 1;		//indicates that screen just changed
+			}
+			//launches repeatedly when this screen is active:
 
 			break;
 
-		//Screen #2: exercise 3.2
+			//Screen #2: exercise 3.2
 		case 2:
-			vTaskSuspend(drawTaskHandle);
-			vTaskSuspend(countButtonAHandle);
-			vTaskSuspend(countButtonBHandle);
-			vTaskSuspend(resetCountButtonHandle);
-			vTaskSuspend(checkJoystickHandle);
+			if (SwitchScreenFlag == 0) /*launches only, if switching to this screen*/{
+				vTaskSuspend(drawTaskHandle);
+				vTaskSuspend(countButtonAHandle);
+				vTaskSuspend(countButtonBHandle);
+				vTaskSuspend(resetCountButtonHandle);
+				vTaskSuspend(checkJoystickHandle);
+				vTaskSuspend(PriorityOneTaskHandle);
+				vTaskSuspend(PriorityTwoTaskHandle);
+				vTaskSuspend(PriorityThreeTaskHandle);
+				vTaskSuspend(PriorityFourTaskHandle);
+				vTaskSuspend(PriorityOutputTaskHandle);
 
-			//vTaskResume(controllableCounterHandle);	--> !! not suspendable by other tasks if resumed here !!
-			vTaskResume(CircleAppearHandle);
-			vTaskResume(CircleDisappearHandle);
-			vTaskResume(countButtonAHandle);
-			vTaskResume(countButtonBHandle);
-			//vTaskResume(resetCountButtonHandle);
-
-			//launches after switching to this screen
-			if (!SecondScreenStartingFlag) {
+				vTaskResume(controllableCounterHandle);	//--> !! not suspendable by other tasks if resumed here !!
+				intContrCounterOn = 1;			// Flag for ControllableCounter
+				vTaskResume(CircleAppearHandle);
+				vTaskResume(CircleDisappearHandle);
+				vTaskResume(countButtonAHandle);
+				vTaskResume(countButtonBHandle);
 				vTaskResume(resetCountButtonHandle);
-				vTaskResume(controllableCounterHandle);
-				intContrCounterOn = 1;
-
-				SecondScreenStartingFlag = 1;
+				SwitchScreenFlag = 1;		//indicates that screen just changed
 			}
+
+
+			//launches repeatedly when this screen is active:
 
 			//Buttons are Pulled-Up, setting a flag to increase it once per press, debouncing --> vTaskDelay
 			//Button A
 			if (!GPIO_ReadInputDataBit(ESPL_Register_Button_A, ESPL_Pin_Button_A) && !FlagButtonA) {
-				xSemaphoreGive(CountButtonASemaphore); 			//giving the semaphore, so intCountButtonA can be increased
+				xSemaphoreGive(CountButtonASemaphore); //giving the semaphore, so intCountButtonA can be increased
 				FlagButtonA = 1;
-				vTaskDelay(50);
-			}
-			else if (GPIO_ReadInputDataBit(ESPL_Register_Button_A, ESPL_Pin_Button_A)) {
+				vTaskDelay(200);
+			} else if (GPIO_ReadInputDataBit(ESPL_Register_Button_A,
+			ESPL_Pin_Button_A)) {
 				FlagButtonA = 0;
 			}
 			//Button B
 			if (!GPIO_ReadInputDataBit(ESPL_Register_Button_B, ESPL_Pin_Button_B) && !FlagButtonB) {
-				xTaskNotifyGive(countButtonBHandle);		//notifying Task countButtonB
+				xTaskNotifyGive(countButtonBHandle); //notifying Task countButtonB
 				FlagButtonB = 1;
-				vTaskDelay(50);
-			}
-			else if (GPIO_ReadInputDataBit(ESPL_Register_Button_B, ESPL_Pin_Button_B)) {
+				vTaskDelay(200);
+			} else if (GPIO_ReadInputDataBit(ESPL_Register_Button_B,
+			ESPL_Pin_Button_B)) {
 				FlagButtonB = 0;
 			}
 
 			//Button C:
-			//starting & suspending Controllable Counter exercise 3.2.4
+			//starting & suspending Controllable Counter, exercise 3.2.4
 			if (!GPIO_ReadInputDataBit(ESPL_Register_Button_C, ESPL_Pin_Button_C) && !FlagButtonC && !intContrCounterOn) {
 				vTaskResume(controllableCounterHandle);
 				FlagButtonC = 1;				//Flag -> edge detection
 				intContrCounterOn = 1; 			//intContrCounterOn = 1 -> ControllableCounter on
-				vTaskDelay(50);					//Delay(50) -> debouncing
+				vTaskDelay(200);					//Delay(50) -> debouncing
 			} else if (!GPIO_ReadInputDataBit(ESPL_Register_Button_C, ESPL_Pin_Button_C) && !FlagButtonC && intContrCounterOn) {
 				vTaskSuspend(controllableCounterHandle);
 				FlagButtonC = 1;
 				intContrCounterOn = 0;
-				vTaskDelay(50);
+				vTaskDelay(200);
 			} else if (GPIO_ReadInputDataBit(ESPL_Register_Button_C, ESPL_Pin_Button_C)) {
 				FlagButtonC = 0;
 			}
-
 			break;
-		//Screen #3: exercise 3.3
-		case 3:
-			vTaskSuspend(drawTaskHandle);
-			vTaskSuspend(CircleAppearHandle);
-			vTaskSuspend(CircleDisappearHandle);
-			vTaskSuspend(controllableCounterHandle);
-			vTaskSuspend(checkJoystickHandle);
-			vTaskSuspend(countButtonAHandle);
-			vTaskSuspend(countButtonBHandle);
-			vTaskSuspend(resetCountButtonHandle);
 
+			//Screen #3: exercise 3.3
+		case 3:
+			if (SwitchScreenFlag == 0){ //launches only, if switching to this screen
+				vTaskSuspend(drawTaskHandle);
+				vTaskSuspend(CircleAppearHandle);
+				vTaskSuspend(CircleDisappearHandle);
+				vTaskSuspend(controllableCounterHandle);
+				vTaskSuspend(checkJoystickHandle);
+				vTaskSuspend(countButtonAHandle);
+				vTaskSuspend(countButtonBHandle);
+				vTaskSuspend(resetCountButtonHandle);
+
+				vTaskResume(PriorityOneTaskHandle);
+				vTaskResume(PriorityTwoTaskHandle);
+				vTaskResume(PriorityThreeTaskHandle);
+				vTaskResume(PriorityFourTaskHandle);
+				vTaskResume(PriorityOutputTaskHandle);
+
+				SwitchScreenFlag = 1;		//indicates that screen just changed
+			}
+			//launches repeatedly when this screen is active:
 
 			break;
 		default:
 			break;
 		}
-
 	}
 }
 /*------------------------------------------------------------------------------------------------------------------------------*/
@@ -211,10 +252,8 @@ void drawTask() {
 			FlagButtonB = 0,
 			FlagButtonC = 0,
 			FlagButtonD = 0,
-			FlagButtonK = 0,
-			FlagButtonE = 0;
+			FlagButtonK = 0;
 
-	int8_t intActExerc = 2;	//first exercise on screen
 
 	char str[100]; // buffer for messages to draw to display
 	struct coord joystickPosition; // joystick queue input buffer
@@ -508,13 +547,8 @@ void CircleDisappear() {
 *	3.2.3
 ***********************/
 void countButtonA() {
-	char str[100];
-	font_t font1; // Load font for ugfx
-	font1 = gdispOpenFont("DejaVuSans24*");
-
 	/* Attempt to create a semaphore. */
 	CountButtonASemaphore = xSemaphoreCreateBinary();
-
 
 	while (TRUE) {
 		if (CountButtonASemaphore != NULL) {
@@ -565,6 +599,124 @@ void controllableCounter() {
 }
 
 /*------------------------------------------------------------------------------------------------------------------------------*/
+/***********************
+ *	3.3.2
+ ***********************/
+void PriorityOneTask() {
+	char str[100]; // buffer for messages to draw to display
+	font_t font1; // Load font for ugfx
+	font1 = gdispOpenFont("DejaVuSans24*");
+
+	//max. 15 iterations, than leaving task
+	//for (int i = 0; i<15; i++){
+	while(1){
+		// Clear background
+		gdispClear(White);
+
+		sprintf(str, "1");
+		gdispDrawString(100, 40, str, font1, Black);
+
+		// Wait for display to stop writing
+		xSemaphoreTake(ESPL_DisplayReady, portMAX_DELAY);
+		// swap buffers
+		ESPL_DrawLayer();
+
+	}
+}
+/*------------------------------------------------------------------------------------------------------------------------------*/
+void PriorityTwoTask() {
+	char str[100]; // buffer for messages to draw to display
+	font_t font1; // Load font for ugfx
+	font1 = gdispOpenFont("DejaVuSans24*");
+
+	//max. 15 iterations, than leaving task
+	//for (int i = 0; i<15; i++) {
+	while(1){
+		vTaskDelay(2);
+
+		// Clear background
+		gdispClear(White);
+
+		sprintf(str, "2");
+		gdispDrawString(100, 60, str, font1, Black);
+
+		// Wait for display to stop writing
+		xSemaphoreTake(ESPL_DisplayReady, portMAX_DELAY);
+		// swap buffers
+		ESPL_DrawLayer();
+
+		xSemaphoreGive(CountButtonASemaphore); 		// giving semaphore for PriorityThreeTask
+
+	}
+}
+/*------------------------------------------------------------------------------------------------------------------------------*/
+void PriorityThreeTask() {
+
+	PriorityThreeTaskSemaphore = xSemaphoreCreateBinary();
+	char str[100]; // buffer for messages to draw to display
+	font_t font1; // Load font for ugfx
+	font1 = gdispOpenFont("DejaVuSans24*");
+
+	//max. 15 iterations, than leaving task
+	//for (int i = 0; i<15; i++) {
+	while(1){
+		if (PriorityThreeTaskSemaphore != NULL) {
+			/* See if we can obtain the semaphore.  If the semaphore is not available wait 10 ticks to see if it becomes free. */
+			if (xSemaphoreTake(PriorityThreeTaskSemaphore, 10) == pdTRUE) {
+				/* We were able to obtain the semaphore and can now access the shared resource. */
+				// Clear background
+				gdispClear(White);
+
+				sprintf(str, "3");
+				gdispDrawString(100, 80, str, font1, Black);
+
+				// Wait for display to stop writing
+				xSemaphoreTake(ESPL_DisplayReady, portMAX_DELAY);
+				// swap buffers
+				ESPL_DrawLayer();
+			} else {
+				/* We could not obtain the semaphore and can therefore not access
+				 the shared resource safely. */
+			}
+		}
+
+
+	}
+}
+/*------------------------------------------------------------------------------------------------------------------------------*/
+void PriorityFourTask() {
+	char str[100]; // buffer for messages to draw to display
+	font_t font1; // Load font for ugfx
+	font1 = gdispOpenFont("DejaVuSans24*");
+
+	//max. 15 iterations, than leaving task
+	//for (int i = 0; i<15; i++) {
+	while(1){
+		vTaskDelay(4);
+		// Clear background
+		gdispClear(White);
+
+
+		sprintf(str, "4");
+		gdispDrawString(100, 100, str, font1, Black);
+
+		// Wait for display to stop writing
+		xSemaphoreTake(ESPL_DisplayReady, portMAX_DELAY);
+		// swap buffers
+		ESPL_DrawLayer();
+
+	}
+
+}
+/*------------------------------------------------------------------------------------------------------------------------------*/
+void PriorityOutputTask() {
+
+	while(1){
+
+	}
+}
+/*------------------------------------------------------------------------------------------------------------------------------*/
+
 /*
  *  Hook definitions needed for FreeRTOS to function.
  */

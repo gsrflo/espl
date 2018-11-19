@@ -25,6 +25,11 @@ void countButtonA();
 void countButtonB();
 void resetCountButton();
 void controllableCounter();
+void PriorityOneTask();
+void PriorityTwoTask();
+void PriorityThreeTask();
+void PriorityFourTask();
+void PriorityOutputTask();
 
 
 #endif
