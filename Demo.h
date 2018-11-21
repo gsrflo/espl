@@ -19,10 +19,10 @@ void sendLine(struct coord coord_1, struct coord coord_2);
 void checkJoystick();
 void drawTask();
 void CircleAppear();
-void CircleDisappear();
 void TaskController();
 void countButtonA();
 void countButtonB();
+void DisplayFPS();
 void resetCountButton();
 void controllableCounter();
 void PriorityOneTask();
@@ -30,6 +30,8 @@ void PriorityTwoTask();
 void PriorityThreeTask();
 void PriorityFourTask();
 void PriorityOutputTask();
+//void sendButtons();
+void CircleDisappearStatic();
 
 
 #endif

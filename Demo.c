@@ -13,12 +13,12 @@
  *
  * 3.2.1 Switching between Exercise Solution Screens 2 3.3 3.4 --> done
  * https://exploreembedded.com/wiki/Task_Switching
- * 3.2.2 Set 1 Task Static
+ * 3.2.2 done
  * 3.2.3 done
  * 3.2.4 done
  * 3.2.5 UART
  * 3.3.1 done
- * 3.3.2 ISR on 15 ticks!!!!
+ * 3.3.2
 */
 
 
@@ -35,7 +35,9 @@ SemaphoreHandle_t ESPL_DisplayReady;
 // Stores lines to be drawn
 QueueHandle_t JoystickQueue;
 
-// creating of handles
+
+
+// creating of dynamic handles
 TaskHandle_t drawTaskHandle = NULL, checkJoystickHandle = NULL,
 		CircleAppearHandle = NULL, CircleDisappearHandle = NULL,
 		countButtonAHandle = NULL, countButtonBHandle = NULL,
@@ -43,16 +45,28 @@ TaskHandle_t drawTaskHandle = NULL, checkJoystickHandle = NULL,
 		PriorityOneTaskHandle = NULL, PriorityTwoTaskHandle = NULL,
 		PriorityThreeTaskHandle = NULL, PriorityFourTaskHandle = NULL,
 		PriorityOutputTaskHandle = NULL, TaskControllerHandle = NULL,
-		uartReceiveHandle = NULL;
+		uartReceiveHandle = NULL, DisplayFPSHandle = NULL;
+
+
+// creating of static handles
+#define STACK_SIZE 200
+StaticTask_t xTaskBuffer;
+StackType_t xStack[ STACK_SIZE ];
+TaskHandle_t CircleDisappearStaticHandle = NULL;
+
 
 // creating of semaphores
 SemaphoreHandle_t	CountButtonASemaphore,
 					PriorityThreeTaskSemaphore;
 
+
+
 // other global variables
 int intCountButtonA = 0;
 int intCountButtonB = 0;
 int intContrCounter = 0;
+int UartFlagButtonD = 0;
+int exercise_3_3_2_start = 0;
 
 /*------------------------------------------------------------------------------------------------------------------------------*/
 int main() {
@@ -69,12 +83,11 @@ int main() {
 	xTaskCreate(drawTask, "drawTask", 1000, NULL, 4, &drawTaskHandle);
 	xTaskCreate(checkJoystick, "checkJoystick", 1000, NULL, 5, &checkJoystickHandle);
 	xTaskCreate(CircleAppear, "CircleAppear", 1000, NULL, 6, &CircleAppearHandle);							//3.2.2
-	xTaskCreate(CircleDisappear, "CircleDisappear", 1000, NULL, 6, &CircleDisappearHandle);					//3.2.2
+	xTaskCreate(DisplayFPS, "DisplayFPS", 1000, NULL, 3, &DisplayFPSHandle);								//3.2.2
 
 	xTaskCreate(countButtonA, "countButtonA", 1000, NULL, 5, &countButtonAHandle);							//3.2.3
 	xTaskCreate(countButtonB, "countButtonB", 1000, NULL, 4, &countButtonBHandle);							//3.2.3
 	xTaskCreate(resetCountButton, "resetCountButton", 1000, NULL, 4, &resetCountButtonHandle);				//3.2.3
-
 	xTaskCreate(controllableCounter,"controllableCounter", 1000, NULL, 4, &controllableCounterHandle);		//3.2.4
 
 	xTaskCreate(PriorityOneTask,"PriorityOneTask", 1000, NULL, 1, &PriorityOneTaskHandle);					//3.3.2
@@ -83,6 +96,9 @@ int main() {
 	xTaskCreate(PriorityFourTask,"PriorityFourTask", 1000, NULL, 4, &PriorityFourTaskHandle);				//3.3.2
 	xTaskCreate(PriorityOutputTask,"PriorityOutputTask", 1000, NULL, 4, &PriorityOutputTaskHandle);			//3.3.2
 
+
+	// Create the task without using any dynamic memory allocation.
+	CircleDisappearStaticHandle = xTaskCreateStatic(CircleDisappearStatic,"CircleDisappearStatic", STACK_SIZE, ( void * ) 1, 5, xStack, &xTaskBuffer );  // Variable to hold the task's data structure.
 
 
 	// Start FreeRTOS Scheduler
@@ -124,7 +140,7 @@ void TaskController() {
 		case 1:
 			if (SwitchScreenFlag == 0) /*launches only, if switching to this screen*/{
 				vTaskSuspend(CircleAppearHandle);
-				vTaskSuspend(CircleDisappearHandle);
+				vTaskSuspend(CircleDisappearStaticHandle);
 				vTaskSuspend(countButtonAHandle);
 				vTaskSuspend(countButtonBHandle);
 				vTaskSuspend(resetCountButtonHandle);
@@ -135,6 +151,7 @@ void TaskController() {
 				vTaskSuspend(PriorityFourTaskHandle);
 				vTaskSuspend(PriorityOutputTaskHandle);
 				vTaskSuspend(uartReceiveHandle);
+				vTaskSuspend(DisplayFPSHandle);
 
 				vTaskResume(drawTaskHandle);
 				vTaskResume(checkJoystickHandle);
@@ -142,7 +159,6 @@ void TaskController() {
 				SwitchScreenFlag = 1;		//indicates that screen just changed
 			}
 			//launches repeatedly when this screen is active:
-
 			break;
 
 			//Screen #2: exercise 3.2
@@ -159,17 +175,18 @@ void TaskController() {
 				vTaskSuspend(PriorityFourTaskHandle);
 				vTaskSuspend(PriorityOutputTaskHandle);
 
-				vTaskResume(controllableCounterHandle);	//--> !! not suspendable by other tasks if resumed here !!
+				vTaskResume(controllableCounterHandle);
 				intContrCounterOn = 1;			// Flag for ControllableCounter
+
 				vTaskResume(CircleAppearHandle);
-				vTaskResume(CircleDisappearHandle);
+				vTaskResume(CircleDisappearStaticHandle);
 				vTaskResume(countButtonAHandle);
 				vTaskResume(countButtonBHandle);
 				vTaskResume(resetCountButtonHandle);
+				//vTaskResume(DisplayFPSHandle);		// --> not  working yet
+
 				SwitchScreenFlag = 1;		//indicates that screen just changed
 			}
-
-
 			//launches repeatedly when this screen is active:
 
 			//Buttons are Pulled-Up, setting a flag to increase it once per press, debouncing --> vTaskDelay
@@ -214,12 +231,13 @@ void TaskController() {
 			if (SwitchScreenFlag == 0){ //launches only, if switching to this screen
 				vTaskSuspend(drawTaskHandle);
 				vTaskSuspend(CircleAppearHandle);
-				vTaskSuspend(CircleDisappearHandle);
+				vTaskSuspend(CircleDisappearStaticHandle);
 				vTaskSuspend(controllableCounterHandle);
 				vTaskSuspend(checkJoystickHandle);
 				vTaskSuspend(countButtonAHandle);
 				vTaskSuspend(countButtonBHandle);
 				vTaskSuspend(resetCountButtonHandle);
+				vTaskSuspend(DisplayFPSHandle);
 
 				vTaskResume(PriorityOneTaskHandle);
 				vTaskResume(PriorityTwoTaskHandle);
@@ -227,12 +245,14 @@ void TaskController() {
 				vTaskResume(PriorityFourTaskHandle);
 				vTaskResume(PriorityOutputTaskHandle);
 
+				exercise_3_3_2_start = xTaskGetTickCount();
 				SwitchScreenFlag = 1;		//indicates that screen just changed
 			}
 			//launches repeatedly when this screen is active:
 
 			break;
 		default:
+			intActExerc = 1;
 			break;
 		}
 	}
@@ -481,9 +501,43 @@ void uartReceive() {
 			}
 			pos = 0;
 		}
+
+		/* For exercise 3.2.5.1 take inside case 4
+				// Clear background
+				gdispClear(White);
+
+				//Write out input
+				sprintf(str, "Input 1: %d", buffer[1]);
+				gdispDrawString(300, 20, str, font1, Black);
+				//Write out input
+				sprintf(str, "Input 2: %d", buffer[2]);
+				gdispDrawString(300, 40, str, font1, Black);
+
+				// Wait for display to stop writing
+				xSemaphoreTake(ESPL_DisplayReady, portMAX_DELAY);
+				// swap buffers
+				ESPL_DrawLayer();
+				*/
 	}
 }
 /*------------------------------------------------------------------------------------------------------------------------------*/
+/*void sendButtons()
+	//Button D
+	if (!GPIO_ReadInputDataBit(ESPL_Register_Button_D, ESPL_Pin_Button_D) && !UartFlagButtonD) {
+			const uint8_t checksum = 1;
+			UART_SendData(startByte);
+			UART_SendData(1);
+			UART_SendData(checksum);
+			UART_SendData(stopByte);
+			UartFlagButtonD = 1;
+			vTaskDelay(50);
+		}
+		else if (GPIO_ReadInputDataBit(ESPL_Register_Button_D, ESPL_Pin_Button_D)) {
+			UartFlagButtonD = 0;
+		}
+*/
+/*------------------------------------------------------------------------------------------------------------------------------*/
+
 void CircleAppear() {
 	char str[100];
 	font_t font1; // Load font for ugfx
@@ -511,16 +565,18 @@ void CircleAppear() {
 		// swap buffers
 		ESPL_DrawLayer();
 
-		vTaskDelay(500); //1000 ticks 1 Hz
+		vTaskDelay(500); //500 ticks 2 Hz
 		}
 }
 /*------------------------------------------------------------------------------------------------------------------------------*/
-void CircleDisappear() {
+void CircleDisappearStatic(void * pvParameters){
+	configASSERT( ( uint32_t ) pvParameters == 1UL );
 	char str[100];
 	font_t font1; // Load font for ugfx
 	font1 = gdispOpenFont("DejaVuSans24*");
 
-	while (TRUE) {
+
+	while (1) {
 		// Clear background
 		gdispClear(White);
 
@@ -540,8 +596,42 @@ void CircleDisappear() {
 		ESPL_DrawLayer();
 
 		vTaskDelay(1000); //1000 ticks 1 Hz
-		}
+	}
 }
+
+/*------------------------------------------------------------------------------------------------------------------------------*/
+
+void DisplayFPS() {
+	char str[100]; // buffer for messages to draw to display
+	font_t font1; // Load font for ugfx
+	font1 = gdispOpenFont("DejaVuSans24*");
+	int StartTick = xTaskGetTickCount();
+	int TicksPerSec = 0;
+
+	while (1)
+	{
+		if(xTaskGetTickCount() - StartTick < 1000)		// 1000ticks --> 1s
+		{
+			TicksPerSec++;
+		}
+		else
+		{
+			// Clear background
+			gdispClear(White);
+			sprintf(str, "FPS: %d", TicksPerSec);
+			gdispDrawString(200, 350, str, font1, Black);
+			// Wait for display to stop writing
+			xSemaphoreTake(ESPL_DisplayReady, portMAX_DELAY);
+			// swap buffers
+			ESPL_DrawLayer();
+
+			TicksPerSec = 0;
+			StartTick = xTaskGetTickCount();
+		}
+	}
+}
+
+
 /*------------------------------------------------------------------------------------------------------------------------------*/
 /***********************
 *	3.2.3
@@ -609,6 +699,7 @@ void PriorityOneTask() {
 
 	//max. 15 iterations, than leaving task
 	//for (int i = 0; i<15; i++){
+
 	while(1){
 		// Clear background
 		gdispClear(White);
@@ -631,22 +722,24 @@ void PriorityTwoTask() {
 
 	//max. 15 iterations, than leaving task
 	//for (int i = 0; i<15; i++) {
-	while(1){
-		vTaskDelay(2);
 
-		// Clear background
-		gdispClear(White);
+	while (1) {
 
-		sprintf(str, "2");
-		gdispDrawString(100, 60, str, font1, Black);
+		if (!((xTaskGetTickCount() - exercise_3_3_2_start) % 2)) {
 
-		// Wait for display to stop writing
-		xSemaphoreTake(ESPL_DisplayReady, portMAX_DELAY);
-		// swap buffers
-		ESPL_DrawLayer();
+			// Clear background
+			gdispClear(White);
 
-		xSemaphoreGive(CountButtonASemaphore); 		// giving semaphore for PriorityThreeTask
+			sprintf(str, "2");
+			gdispDrawString(100, 60, str, font1, Black);
 
+			// Wait for display to stop writing
+			xSemaphoreTake(ESPL_DisplayReady, portMAX_DELAY);
+			// swap buffers
+			ESPL_DrawLayer();
+
+			xSemaphoreGive(CountButtonASemaphore); // giving semaphore for PriorityThreeTask
+		}
 	}
 }
 /*------------------------------------------------------------------------------------------------------------------------------*/
@@ -659,6 +752,7 @@ void PriorityThreeTask() {
 
 	//max. 15 iterations, than leaving task
 	//for (int i = 0; i<15; i++) {
+
 	while(1){
 		if (PriorityThreeTaskSemaphore != NULL) {
 			/* See if we can obtain the semaphore.  If the semaphore is not available wait 10 ticks to see if it becomes free. */
@@ -691,20 +785,20 @@ void PriorityFourTask() {
 
 	//max. 15 iterations, than leaving task
 	//for (int i = 0; i<15; i++) {
-	while(1){
-		vTaskDelay(4);
-		// Clear background
-		gdispClear(White);
 
+	while (1) {
+		if (!((xTaskGetTickCount() - exercise_3_3_2_start) % 4)) {
+			// Clear background
+			gdispClear(White);
 
-		sprintf(str, "4");
-		gdispDrawString(100, 100, str, font1, Black);
+			sprintf(str, "4");
+			gdispDrawString(100, 100, str, font1, Black);
 
-		// Wait for display to stop writing
-		xSemaphoreTake(ESPL_DisplayReady, portMAX_DELAY);
-		// swap buffers
-		ESPL_DrawLayer();
-
+			// Wait for display to stop writing
+			xSemaphoreTake(ESPL_DisplayReady, portMAX_DELAY);
+			// swap buffers
+			ESPL_DrawLayer();
+		}
 	}
 
 }
@@ -729,4 +823,60 @@ void vApplicationMallocFailedHook() {
 	while (TRUE) {
 	};
 }
+/*------------------------------------------------------------------------------------------------------------------------------*/
+/*
+ * for static allocated Task
+ */
 
+/* configSUPPORT_STATIC_ALLOCATION is set to 1, so the application must provide an
+implementation of vApplicationGetIdleTaskMemory() to provide the memory that is
+used by the Idle task. */
+void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer,
+                                    StackType_t **ppxIdleTaskStackBuffer,
+                                    uint32_t *pulIdleTaskStackSize )
+{
+/* If the buffers to be provided to the Idle task are declared inside this
+function then they must be declared static - otherwise they will be allocated on
+the stack and so not exists after this function exits. */
+static StaticTask_t xIdleTaskTCB;
+static StackType_t uxIdleTaskStack[ configMINIMAL_STACK_SIZE ];
+
+    /* Pass out a pointer to the StaticTask_t structure in which the Idle task's
+    state will be stored. */
+    *ppxIdleTaskTCBBuffer = &xIdleTaskTCB;
+
+    /* Pass out the array that will be used as the Idle task's stack. */
+    *ppxIdleTaskStackBuffer = uxIdleTaskStack;
+
+    /* Pass out the size of the array pointed to by *ppxIdleTaskStackBuffer.
+    Note that, as the array is necessarily of type StackType_t,
+    configMINIMAL_STACK_SIZE is specified in words, not bytes. */
+    *pulIdleTaskStackSize = configMINIMAL_STACK_SIZE;
+}
+/*-----------------------------------------------------------*/
+
+/* configSUPPORT_STATIC_ALLOCATION and configUSE_TIMERS are both set to 1, so the
+application must provide an implementation of vApplicationGetTimerTaskMemory()
+to provide the memory that is used by the Timer service task. */
+void vApplicationGetTimerTaskMemory( StaticTask_t **ppxTimerTaskTCBBuffer,
+                                     StackType_t **ppxTimerTaskStackBuffer,
+                                     uint32_t *pulTimerTaskStackSize )
+{
+/* If the buffers to be provided to the Timer task are declared inside this
+function then they must be declared static - otherwise they will be allocated on
+the stack and so not exists after this function exits. */
+static StaticTask_t xTimerTaskTCB;
+static StackType_t uxTimerTaskStack[ configTIMER_TASK_STACK_DEPTH ];
+
+    /* Pass out a pointer to the StaticTask_t structure in which the Timer
+    task's state will be stored. */
+    *ppxTimerTaskTCBBuffer = &xTimerTaskTCB;
+
+    /* Pass out the array that will be used as the Timer task's stack. */
+    *ppxTimerTaskStackBuffer = uxTimerTaskStack;
+
+    /* Pass out the size of the array pointed to by *ppxTimerTaskStackBuffer.
+    Note that, as the array is necessarily of type StackType_t,
+    configTIMER_TASK_STACK_DEPTH is specified in words, not bytes. */
+    *pulTimerTaskStackSize = configTIMER_TASK_STACK_DEPTH;
+}
