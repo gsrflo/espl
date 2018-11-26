@@ -1,2 +1,2 @@
-# espl
-Embedded Systems Programming Laboratory
+# espl exercises
+Embedded Systems Programming Laboratory Exercises
